@@ -297,6 +297,7 @@ RunModel <- function(AnalysisType, SimReturn, SimVolatility, ER_Policy, ScenType
     }
     
     #FundPeriod[i] <- GetNPER(NewDR[i],AmoBaseInc,UAL_AVA[i-1],0.5,VarStat_AmoPayment[i])
+    #Placeholder. will update later
     FundPeriod[i] <- 29
     #print(FundPeriod[i])
     AmoFactor[i] <- as.matrix(PresentValue(((1+NewDR[i])/(1+AmoBaseInc))-1,AmoYearsInput_Current[ProjectionCount+1,2],1) / ((1+NewDR[i])^0.5))

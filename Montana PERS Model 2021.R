@@ -65,17 +65,12 @@ PMT <- function(r, g = 0, nper, pv, t = 1) {
 #PresentValue(((1+NewDR[i])/(1+AmoBaseInc))-1,AmoYearsInput_Current[ProjectionCount+1,2],1) / ((1+NewDR[i])^0.5)
 GetNPER <- function(r,g,pv,t,pmt){
   PV <- pv*(1+r)^t
-  R <- (1+r)/(1+g)
-  TempValue <- PV*(R+1)/(R*pmt)
-  #print(PV)
-  #print(pmt)
-  #print(TempValue)
-  #print(R)
-  NPER <- log(1/abs(1-TempValue),R)
+  R <- (1+r)/(1+g) - 1
+  TempValue <- R*(1+R)*PV/pmt
+  NPER <- -log(1-TempValue,(1+R))
+  if(is.infinite(NPER)) {NPER <- 0}
   print(NPER)
   return(NPER)
-  
-  
 }
 #
 ##################################################################################################################################################################
@@ -237,7 +232,8 @@ for(i in StartIndex:length(FYE)){
 ##################################################################################################################################################################
 #Running the model from NC onwards. this gets iterated for different scenarios
 LvDollarorPercent <- 'Lv%'
-RunModel <- function(AnalysisType, SimReturn, SimVolatility, ER_Policy, ScenType, SupplContrib, LvDollarorPercent){
+ExternalContrib <- c(0)
+RunModel <- function(AnalysisType, SimReturn, SimVolatility, ER_Policy, ScenType, ExternalContrib, LvDollarorPercent){
   #Scenario Index for referencing later based on investment return data
   ScenarioIndex <- which(colnames(Scenario_Data) == as.character(ScenType))
   
@@ -296,9 +292,8 @@ RunModel <- function(AnalysisType, SimReturn, SimVolatility, ER_Policy, ScenType
       }
     }
     
-    #FundPeriod[i] <- GetNPER(NewDR[i],AmoBaseInc,UAL_AVA[i-1],0.5,VarStat_AmoPayment[i])
-    #Placeholder. will update later
-    FundPeriod[i] <- 29
+    FundPeriod[i] <- GetNPER(NewDR[i],AmoBaseInc,UAL_AVA[i-1],0.5,VarStat_AmoPayment[i])
+    #FundPeriod[i] <- 29
     #print(FundPeriod[i])
     AmoFactor[i] <- as.matrix(PresentValue(((1+NewDR[i])/(1+AmoBaseInc))-1,AmoYearsInput_Current[ProjectionCount+1,2],1) / ((1+NewDR[i])^0.5))
     
@@ -345,13 +340,19 @@ RunModel <- function(AnalysisType, SimReturn, SimVolatility, ER_Policy, ScenType
     }
     #
     #Solvency Contribution, Net CF, Expected MVA
-    CashFlows <- BenPayments[i] + AdminExp[i] +  EE_NC_CurrentHires[i] + EE_NC_NewHires[i] + ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i]
+    if(FYE[i] == 2023){
+      CashFlows <- ExternalContrib + BenPayments[i] + AdminExp[i] +  EE_NC_CurrentHires[i] + EE_NC_NewHires[i] + ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i]
+    } else {
+      CashFlows <- BenPayments[i] + AdminExp[i] +  EE_NC_CurrentHires[i] + EE_NC_NewHires[i] + ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i]
+    }
+    #CashFlows <- BenPayments[i] + AdminExp[i] +  EE_NC_CurrentHires[i] + EE_NC_NewHires[i] + ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i]
     Solv_Contrib[i] <- as.double(max(-(MVA[i-1]*(1+ROA_MVA[i]) + CashFlows*(1+ROA_MVA[i])^0.5) / (1+ROA_MVA[i])^0.5,0))
     
     NetCF[i] <- CashFlows + Solv_Contrib[i]
     ExpInvInc[i] <- (MVA[i-1]*NewDR[i-1]) + (NetCF[i]*NewDR[i-1]*0.5)
     ExpectedMVA[i] <- MVA[i-1] + NetCF[i] + ExpInvInc[i]
-    MVA[i] <- MVA[i-1]*(1+ROA_MVA[i]) + NetCF[i]*(1+ROA_MVA[i])^0.5
+    MVA[i] <- MVA[i-1]*(1+ROA_MVA[i]) + (NetCF[i])*(1+ROA_MVA[i])^0.5 
+    
     #
     #Gain Loss, Defered Losses
     GainLoss[i] <- MVA[i] - ExpectedMVA[i] 
@@ -373,7 +374,17 @@ RunModel <- function(AnalysisType, SimReturn, SimVolatility, ER_Policy, ScenType
     UAL_MVA_InflAdj[i] <- UAL_MVA[i] / ((1 + asum_infl)^(FYE[i] - NC_StaryYear))
     #
     #Employer Contribution
-    Total_Contrib_DB[i] <- ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i] + Solv_Contrib[i]
+    if(FYE[i] == 2023){
+      Total_Contrib_DB[i] <- ExternalContrib + ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i] + Solv_Contrib[i]
+      
+      #CashFlows <- ExternalContrib + BenPayments[i] + AdminExp[i] +  EE_NC_CurrentHires[i] + EE_NC_NewHires[i] + ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i]
+    } else {
+      Total_Contrib_DB[i] <- ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i] + Solv_Contrib[i]
+      
+      #CashFlows <- ExternalContrib + BenPayments[i] + AdminExp[i] +  EE_NC_CurrentHires[i] + EE_NC_NewHires[i] + ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i]
+    }
+    
+    #Total_Contrib_DB[i] <- ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i] + Solv_Contrib[i]
     if(NewHirePlan == "Hybrid"){
       Total_Contrib_DC[i] <- Hybrid_Contrib*NewHiresDBHybridPayroll[i]
     } else if (NewHirePlan == "DC"){
@@ -437,7 +448,7 @@ MaxLength <- 0
 if(ScenarioRuns == 'Return Scenarios'){
   Scenarios <- c('Assumption','Model','Recession','Recurring Recession')
   for (i in 1:length(Scenarios)){
-    NewData <- as.data.frame(RunModel('Deterministic',SimReturn, SimVolatility, 'ADC', Scenarios[i], c(0), 'Lv%'))
+    NewData <- as.data.frame(RunModel('Deterministic',SimReturn, SimVolatility, 'Variable Statutory', Scenarios[i], c(0), 'Lv%'))
     Scenario_Returns <- cbind(Scenario_Returns,NewData$ROA_MVA)
     Scenario_UAL <- cbind(Scenario_UAL,NewData$UAL_MVA_InflAdj)
     Scenario_FR <- cbind(Scenario_FR,NewData$FR_MVA)
@@ -449,11 +460,27 @@ if(ScenarioRuns == 'Return Scenarios'){
   #Scenario names should be the same as Scenarios but for some cases like supplemental, lv$, etc. it will be different
   ScenarioNames <- Scenarios
   
+} else if(ScenarioRuns == 'Supplemental Contribution'){
+  Scenarios <- c('Assumption','Recurring Recession','Assumption','Recurring Recession')
+  ExternalContrib <- c(0,0,1000,1000)
+  for (i in 1:length(Scenarios)){
+    NewData <- as.data.frame(RunModel('Deterministic',SimReturn, SimVolatility, 'ADC', Scenarios[i], ExternalContrib[i], 'Lv%'))
+    Scenario_Returns <- cbind(Scenario_Returns,NewData$ROA_MVA)
+    Scenario_UAL <- cbind(Scenario_UAL,NewData$UAL_MVA_InflAdj)
+    Scenario_FR <- cbind(Scenario_FR,NewData$FR_MVA)
+    Scenario_ER_Percentage <- cbind(Scenario_ER_Percentage,NewData$ER_Percentage)
+    Scenario_ER_InflAdj <- cbind(Scenario_ER_InflAdj,NewData$ER_InflAdj)
+    Scenario_Total_ER <- cbind(Scenario_Total_ER,NewData$Total_ER)
+    Scenario_AllIn_ER <- cbind(Scenario_AllIn_ER,NewData$AllInCost)
+  }
+  #Scenario names should be the same as Scenarios but for some cases like supplemental, lv$, etc. it will be different
+  ScenarioNames <- c('Assumption - No Supplemental', 'Recurring Recession - No Supplemental', 'Assumption - $500 Million', 'Recurring Recession - $500 Million')
+  
 } else if(ScenarioRuns == 'Lv$ vs %'){
   Scenarios <- c('Assumption','Lv%','Assumption','Lv$','Recurring Recession','Lv%','Recurring Recession','Lv$')
   MaxLength <- length(Scenarios)/2
   for (i in 1:MaxLength){
-    NewData <- as.data.frame(RunModel('Deterministic',SimReturn, SimVolatility, 'ADC', Scenarios[i*2 - 1], c(0), Scenarios[i*2]))
+    NewData <- as.data.frame(RunModel('Deterministic',SimReturn, SimVolatility, 'Statutory Rate', Scenarios[i*2 - 1], c(0), Scenarios[i*2]))
     Scenario_Returns <- cbind(Scenario_Returns,NewData$ROA_MVA)
     Scenario_UAL <- cbind(Scenario_UAL,NewData$UAL_MVA_InflAdj)
     Scenario_FR <- cbind(Scenario_FR,NewData$FR_MVA)
@@ -495,6 +522,11 @@ colnames(Scenario_FR) <- c('FYE',ScenarioNames)
 colnames(Scenario_ER_Percentage) <- c('FYE',ScenarioNames)
 colnames(Scenario_ER_InflAdj) <- c('FYE',ScenarioNames)
 
+write_excel_csv(Scenario_ER_Percentage,'ER_Pct.csv')
+write_excel_csv(Scenario_ER_InflAdj,'ER_Infl.csv')
+write_excel_csv(Scenario_FR,'FR.csv')
+write_excel_csv(Scenario_UAL,'UAL.csv')
+
 ScenarioPlot <- function(Data, YAxisLabel){
   ggplot(Data, aes(x = FYE)) +
     geom_line(aes(y = Data[,2]), color = "#FF6633", size = 2) +
@@ -507,7 +539,7 @@ ScenarioPlot <- function(Data, YAxisLabel){
     labs(y = YAxisLabel, x = 'Year') + ggtitle(YAxisLabel)
   #scale_linetype_manual(labels = '')
 }
-ScenarioPlot(Scenario_UAL, 'Unfunded Liabilities (MVA)')
+ScenarioPlot(Scenario_ER_Percentage, 'Unfunded Liabilities (MVA)')
 #
 ##################################################################################################################################################################
 #

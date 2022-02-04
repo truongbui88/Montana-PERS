@@ -65,7 +65,7 @@ LinearInterpolation <- function(Data){
 }
 #
 IsRetirementEligible <- function(Age, YOS, HireType){
-  if(HireType == 'Regular'){
+  if(HireType == 'New Hire'){
     Check = ifelse((Age >= NormalRetAgeI & YOS >= NormalYOSI) |
                      (Age >= NormalRetAgeII), TRUE, FALSE)
   } else if (HireType == 'Legacy'){
@@ -76,7 +76,7 @@ IsRetirementEligible <- function(Age, YOS, HireType){
 }
 #
 RetirementType <- function(Age, YOS, HireType){
-  if(HireType == 'Regular'){
+  if(HireType == 'New Hire'){
     Type = ifelse(IsRetirementEligible(Age,YOS,HireType), 'Regular',
                   ifelse((Age >= EarlyRetAge & YOS >= EarlyRetYOS),'Early','None'))
   } else if (HireType == 'Legacy'){
@@ -178,13 +178,12 @@ GetVestedBalanceData <- function(HiringAge,StartingSalary, HireType){
     ungroup()
   
   #Recalibrate these values - legacy vs regular
-  AFNormalRetAge <- ifelse(RetirementType(Age,YOS, HireType) == 'Regular',AnnFactorData$AF[AnnFactorData$Age == NormalRetAgeI],
+  AFNormalRetAge <- ifelse(HireType == 'New Hire',AnnFactorData$AF[AnnFactorData$Age == NormalRetAgeI],
                            AnnFactorData$AF[AnnFactorData$Age == NormalRetAgeI_Legacy])
-  
-  SurvProbNormalRetAge <- ifelse(RetirementType(Age,YOS, HireType) == 'Regular',AnnFactorData$Prob[AnnFactorData$Age == NormalRetAgeI],
+  SurvProbNormalRetAge <- ifelse(HireType == 'New Hire',AnnFactorData$Prob[AnnFactorData$Age == NormalRetAgeI],
                            AnnFactorData$Prob[AnnFactorData$Age == NormalRetAgeI_Legacy])
+  NormalRetAge_Final <- ifelse(HireType == 'New Hire', NormalRetAgeI,NormalRetAgeI_Legacy)
   
-  NormalRetAge_Final <- ifelse(RetirementType(Age,YOS, HireType) == 'Regular', NormalRetAgeI,NormalRetAgeI_Legacy)
   ReducedFactor <- expand_grid(Age, YOS) %>% 
     group_by(YOS) %>%
     left_join(AnnFactorData,by = "Age") %>% 
@@ -246,7 +245,7 @@ GetNormalCostFinal <- function(SalaryHeadcountData){
   for(i in 1:nrow(SalaryHeadcountData)){
     VestedBalanceData <- GetVestedBalanceData(SalaryHeadcountData$entry_age[i], 
                                               SalaryHeadcountData$Starting_Salary[i],
-                                              'Legacy')
+                                              'New Hire')
     #Calc and return Normal Cost
     SalaryHeadcountData$NormalCost[i] <- sum(VestedBalanceData$TermAfterVest*VestedBalanceData$PVPenWealth) / 
       sum(VestedBalanceData$TermAfterVest*VestedBalanceData$PVCumWage)

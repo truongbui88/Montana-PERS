@@ -211,8 +211,8 @@ GetVestedBalanceData <- function(HiringAge,StartingSalary, HireType){
                                       #Reduction for early retirement for legacy
                                       ifelse(RetirementType(Age,YOS,'Legacy') == 'Early',
                                              BenMult2*pmin(YOS,25) + BenMult3*pmax(YOS-25,0) -
-                                             0.05*pmin(EarlyRetAgeII_Legacy - EarlyRetAge_Legacy,5) -
-                                             0.03*pmax(EarlyRetAgeII_Legacy - EarlyRetAge_Legacy - 5,0),0)),
+                                             0.05*pmin(EarlyRetAgeII_Legacy - Age,5) -
+                                             0.03*pmax(EarlyRetAgeII_Legacy - Age - 5,0),0)),
            ReducedFactMult = ifelse(RetirementType(Age,YOS,HireType) == 'Regular',
                                     RF*GradedMult,RF*GradedMult_Legacy),
                             
@@ -225,7 +225,7 @@ GetVestedBalanceData <- function(HiringAge,StartingSalary, HireType){
   OptimumBenefit <- BenefitsTable %>% group_by(Age) %>% summarise(MaxBenefit = max(PresentValue))
   SalaryData <- left_join(SalaryData,OptimumBenefit) 
   SalaryData <- left_join(SalaryData,TermAfterVest,by = 'Age') %>%
-    mutate(PenWealth = pmax(DBERBalance+DBEEBalance,MaxBenefit), 
+    mutate(PenWealth = pmax(DBERBalance+2*DBEEBalance,MaxBenefit), 
            RealPenWealth = PenWealth/(1 + assum_infl)^YOS,
            PVPenWealth = PenWealth/(1 + ARR)^YOS,
            PVCumWage = CumWage/(1 + assum_infl)^YOS,
@@ -245,16 +245,16 @@ GetNormalCostFinal <- function(SalaryHeadcountData){
   for(i in 1:nrow(SalaryHeadcountData)){
     VestedBalanceData <- GetVestedBalanceData(SalaryHeadcountData$entry_age[i], 
                                               SalaryHeadcountData$Starting_Salary[i],
-                                              'New Hire')
+                                              'Legacy')
     #Calc and return Normal Cost
     SalaryHeadcountData$NormalCost[i] <- sum(VestedBalanceData$TermAfterVest*VestedBalanceData$PVPenWealth) / 
-      sum(VestedBalanceData$TermAfterVest*VestedBalanceData$PVCumWage)
+                                         sum(VestedBalanceData$TermAfterVest*VestedBalanceData$PVCumWage)
     
   }
   
   #Calc the weighted average Normal Cost
   NormalCostFinal <- sum(SalaryHeadcountData$Average_Salary*SalaryHeadcountData$Headcount_Total*SalaryHeadcountData$NormalCost) /
-    sum(SalaryHeadcountData$Average_Salary*SalaryHeadcountData$Headcount_Total)
+                     sum(SalaryHeadcountData$Average_Salary*SalaryHeadcountData$Headcount_Total)
   
   return(NormalCostFinal)
 }

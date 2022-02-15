@@ -181,7 +181,6 @@ GetVestedBalanceData <- function(HiringAge, StartingSalary, HireType){
   
   #Salary increases and other
   SalaryData <- tibble(Age,YOS) %>%
-    group_by(Age) %>%
     mutate(Salary = StartingSalary*cumprod(1+lag(TotalSalaryGrowth,default = 0)),
            FinalAvgSalary = ifelse(YOS >= Vesting, rollmean(lag(Salary), k = FinAvgSalaryYears, fill = 0, align = "right"), 0),
            DB_EE_Contrib = DB_EE_Contrib_Rate*Salary, DB_ER_Contrib = DB_ER_Contrib_Rate*Salary,

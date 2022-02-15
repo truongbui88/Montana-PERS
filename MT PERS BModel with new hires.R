@@ -236,7 +236,7 @@ GetVestedBalanceData <- function(HiringAge, StartingSalary, HireType){
                                              BenMult2*pmin(YOS,25) + BenMult3*pmax(YOS-25,0) -
                                              0.05*pmin(EarlyRetAgeII_Legacy - Age,5) -
                                              0.03*pmax(EarlyRetAgeII_Legacy - Age - 5,0),0)),
-           ReducedFactMult = ifelse(RetirementType(Age,YOS,HireType) == 'Regular',
+           ReducedFactMult = ifelse(HireType == 'New Hire',
                                     RF*GradedMult,RF*GradedMult_Legacy),
                             
            AnnFactorAdj = AF_Ret * surv_DR_ret / surv_DR_COLA,
@@ -248,7 +248,7 @@ GetVestedBalanceData <- function(HiringAge, StartingSalary, HireType){
   OptimumBenefit <- BenefitsTable %>% group_by(Age) %>% summarise(MaxBenefit = max(PresentValue))
   SalaryData <- left_join(SalaryData,OptimumBenefit,by = ('Age')) 
   SalaryData <- left_join(SalaryData,SeparationRates,by = c('Age','YOS')) %>%
-    mutate(PenWealth = pmax(DBERBalance + 2*DBEEBalance,MaxBenefit), 
+    mutate(PenWealth = pmax(DBERBalance + DBEEBalance,MaxBenefit), 
            RealPenWealth = PenWealth/(1 + assum_infl)^YOS,
            PVPenWealth = SepProb*PenWealth/(1 + ARR)^YOS,
            PVCumWage = SepProb*CumWage/(1 + ARR)^YOS,

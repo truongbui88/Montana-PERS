@@ -98,11 +98,34 @@ cumFV <- function(interest, cashflow){
 #
 ################################################################################################################################################################
 #
-#Linear interpolation of termination rates
+#Linear interpolation of Termination Rates and Retirement Rates
 TermAfterVest$TermAfterVest <- LinearInterpolation(TermAfterVest$TermAfterVest)
-#
+RetirementRates$Disabled_RetRate <- LinearInterpolation(RetirementRates$Disabled_RetRate)
+HireType <- 'New Hire'
+
 #Function for vested balance
-GetVestedBalanceData <- function(HiringAge,StartingSalary, HireType){
+GetVestedBalanceData <- function(HiringAge, StartingSalary, HireType){
+  #Separation Rates
+  SeparationRates <- expand_grid(Age, YOS) %>% 
+    left_join(TermAfterVest, by = "Age") %>%
+    left_join(TermBeforeVest, by = "YOS") %>% # Joining by YOS & AGE
+    left_join(RetirementRates, by = "Age") 
+  
+  #If you're retirement eligible, use the retirement rates, then checks YOS < 5 and use the regular termination rates
+  SeparationRates <- SeparationRates %>% 
+    mutate(retirement_type = RetirementType(Age,YOS,HireType),
+           
+           SepRate = ifelse(retirement_type == "Regular", Regular_RetRate,
+                            ifelse(retirement_type == "Reduced", Less30_RetRate,
+                                   ifelse(YOS < 5, TermBeforeVest, TermAfterVest))))  %>%
+    group_by(Age) %>%
+    mutate(RemainingProb = cumprod(1 - lag(SepRate, default = 0)),
+           SepProb = lag(RemainingProb, default = 1) - RemainingProb) %>% 
+    ungroup()
+  
+  #Filter out unecessary values
+  SeparationRates <- SeparationRates %>% select(Age, YOS, RemainingProb, SepProb)
+  
   #MP Scales
   #Transform base mortality rates and mortality improvement rates
   MaleMP <- MaleMP %>% 
@@ -158,6 +181,7 @@ GetVestedBalanceData <- function(HiringAge,StartingSalary, HireType){
   
   #Salary increases and other
   SalaryData <- tibble(Age,YOS) %>%
+    group_by(Age) %>%
     mutate(Salary = StartingSalary*cumprod(1+lag(TotalSalaryGrowth,default = 0)),
            FinalAvgSalary = ifelse(YOS >= Vesting, rollmean(lag(Salary), k = FinAvgSalaryYears, fill = 0, align = "right"), 0),
            DB_EE_Contrib = DB_EE_Contrib_Rate*Salary, DB_ER_Contrib = DB_ER_Contrib_Rate*Salary,
@@ -217,18 +241,18 @@ GetVestedBalanceData <- function(HiringAge,StartingSalary, HireType){
                                     RF*GradedMult,RF*GradedMult_Legacy),
                             
            AnnFactorAdj = AF_Ret * surv_DR_ret / surv_DR_COLA,
-           PensionBenefit = ReducedFactMult*FinalAvgSalary*YOS,
+           PensionBenefit = ReducedFactMult*FinalAvgSalary,
            PresentValue = ifelse(Age > RetirementAge, 0, PensionBenefit*AnnFactorAdj)) %>% 
     ungroup() 
   
   #The max benefit is done outside the table because it will be merged with Salary data
   OptimumBenefit <- BenefitsTable %>% group_by(Age) %>% summarise(MaxBenefit = max(PresentValue))
-  SalaryData <- left_join(SalaryData,OptimumBenefit) 
-  SalaryData <- left_join(SalaryData,TermAfterVest,by = 'Age') %>%
-    mutate(PenWealth = pmax(DBERBalance+2*DBEEBalance,MaxBenefit), 
+  SalaryData <- left_join(SalaryData,OptimumBenefit,by = ('Age')) 
+  SalaryData <- left_join(SalaryData,SeparationRates,by = c('Age','YOS')) %>%
+    mutate(PenWealth = pmax(DBERBalance + 2*DBEEBalance,MaxBenefit), 
            RealPenWealth = PenWealth/(1 + assum_infl)^YOS,
-           PVPenWealth = PenWealth/(1 + ARR)^YOS,
-           PVCumWage = CumWage/(1 + assum_infl)^YOS,
+           PVPenWealth = SepProb*PenWealth/(1 + ARR)^YOS,
+           PVCumWage = SepProb*CumWage/(1 + ARR)^YOS,
            Ratio = PVPenWealth/PVCumWage,
            DCEEBalance_Infl = DCEEBalance/(1+assum_infl)^YOS,
            DCERBalance_Infl = DCERBalance/(1+assum_infl)^YOS) %>% 
@@ -245,10 +269,10 @@ GetNormalCostFinal <- function(SalaryHeadcountData){
   for(i in 1:nrow(SalaryHeadcountData)){
     VestedBalanceData <- GetVestedBalanceData(SalaryHeadcountData$entry_age[i], 
                                               SalaryHeadcountData$Starting_Salary[i],
-                                              'Legacy')
+                                              'New Hire')
     #Calc and return Normal Cost
-    SalaryHeadcountData$NormalCost[i] <- sum(VestedBalanceData$TermAfterVest*VestedBalanceData$PVPenWealth) / 
-                                         sum(VestedBalanceData$TermAfterVest*VestedBalanceData$PVCumWage)
+    SalaryHeadcountData$NormalCost[i] <- sum(VestedBalanceData$PVPenWealth) / 
+                                         sum(VestedBalanceData$PVCumWage)
     
   }
   

@@ -47,9 +47,9 @@ PMT0 <- function(r, nper, pv) {
     a <- pv*r*(1+r)^(nper-1)/((1+r)^nper-1)  
   }
   
-  if(nper == 0){
-    a <- 0
-  }
+  # if(nper == 0){
+  #   a <- 0
+  # }
   
   return(a)
 }
@@ -103,111 +103,96 @@ FYE <- StartYear:EndProjectionYear
 StartIndex <- StartProjectionYear - StartYear + 1
 HistoricalIndex <- StartProjectionYear - StartYear
 
-#Assign values for simulation
-if(SimType == 'Assumed'){
-  SimReturn <- SimReturnAssumed
-} else if(AnalysisType == 'Conservative'){
-  SimReturn <- SimReturnConservative
-}
+
 
 #Initialize Amortization and Outstnading Base
 RowColCount <- (EndProjectionYear - StartProjectionYear + 1)
-OutstandingBase_CurrentHires <- matrix(0,RowColCount, RowColCount + 1)
-Amortization_CurrentHires <- matrix(0,RowColCount, RowColCount + 1)
-OutstandingBase_NewHires <- matrix(0,RowColCount, RowColCount + 1)
-Amortization_NewHires <- matrix(0,RowColCount, RowColCount + 1)
-AmoYearsInput_CurrentHires <- read_excel(FileName, sheet = 'Amortization_CurrentDebt')
-AmoYearsInput_NewHires <- read_excel(FileName, sheet = 'Amortization_NewDebt')
+
 #
 ##################################################################################################################################################################
-#
-#Offset Matrix. Used later for Amortization calculation
-#Current Hires
-OffsetYears_CurrentHires <- matrix(0,RowColCount, RowColCount)
-for(i in 1:nrow(OffsetYears_CurrentHires)){
-  RowCount <- i
-  ColCount <- 1
-  #This is to create the "zig-zag" pattern of amo years. you also want it to become 0 if the amo years is greater than the payments
-  #Meaning if its 10 years, then after 10 years, the amo payment is 0
-  while(RowCount <= nrow(OffsetYears_CurrentHires) && (ColCount <= as.double(AmoYearsInput_CurrentHires[i,2]))){
-    OffsetYears_CurrentHires[RowCount,ColCount] <- as.double(AmoYearsInput_CurrentHires[i,2])
-    RowCount <- RowCount + 1
-    ColCount <- ColCount + 1
-  }
-}
 
-for(i in 1:nrow(OffsetYears_CurrentHires)-1){
-  for(j in 1:i+1){
-    if(OffsetYears_CurrentHires[i+1,j] > 0) {
-      OffsetYears_CurrentHires[i+1,j] <- max(OffsetYears_CurrentHires[i+1,j] - j + 1, 1) 
-    }
-  }
-}
-
-#New Hires
-OffsetYears_NewHires <- matrix(0,RowColCount, RowColCount)
-for(i in 1:nrow(OffsetYears_NewHires)){
-  RowCount <- i
-  ColCount <- 1
-  #This is to create the "zig-zag" pattern of amo years. you also want it to become 0 if the amo years is greater than the payments
-  #Meaning if its 10 years, then after 10 years, the amo payment is 0
-  while(RowCount <= nrow(OffsetYears_NewHires) && (ColCount <= as.double(AmoYearsInput_NewHires[i,2]))){
-    OffsetYears_NewHires[RowCount,ColCount] <- as.double(AmoYearsInput_NewHires[i,2])
-    RowCount <- RowCount + 1
-    ColCount <- ColCount + 1
-  }
-}
-
-for(i in 1:nrow(OffsetYears_NewHires)-1){
-  for(j in 1:i+1){
-    if(OffsetYears_NewHires[i+1,j] > 0) {
-      OffsetYears_NewHires[i+1,j] <- max(OffsetYears_NewHires[i+1,j] - j + 1, 1) 
-    }
-  }
-}
-
-#Initialize first row of Amortization and Outstanding Base
-OutstandingBase_CurrentHires[1,1] <- UAL_AVA_CurrentHires[HistoricalIndex]
-Amortization_CurrentHires[1,1] <- PMT(pv = OutstandingBase_CurrentHires[1,1], 
-                                      r = NewDR[HistoricalIndex], g = AmoBaseInc, t = 0.5,
-                                      nper = pmax(OffsetYears_CurrentHires[1,1],1))
-
-OutstandingBase_NewHires[1,1] <- UAL_AVA_NewHires[HistoricalIndex]
-Amortization_NewHires[1,1] <- PMT(pv = OutstandingBase_NewHires[1,1], 
-                                  r = NewDR[HistoricalIndex], g = AmoBaseInc, t = 0.5,
-                                  nper = pmax(OffsetYears_NewHires[1,1],1))
-#
-##################################################################################################################################################################
-#
-LvDollarorPercent <- 'Lv%'
-ExternalContrib <- c(0)
-RunModel <- function(Analysis_Type = AnalysisType, 
-                     Sim_Return = SimReturn, 
-                     Sim_Volatility = SimVolatility, 
-                     ER_Policy = ERPolicy,
-                     Scen_Type = ScenType,
-                     CostSharing_NC = CostSharingNC,
-                     CostSharing_Amo = CostSharingAmo,
-                     AmoBase_Inc = AmoBaseInc,
-                     Lv_DollarorPercent = LvDollarorPercent,
-                     External_Contrib = ExternalContrib){
+RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate for current hires. Min = 4%. Max = 9%. 0.25% step
+                     DR_NewHires = dis_r_new,                   #Discount rate for new hires. Min = 4%. Max = 9%. 0.25% step
+                     ReturnType = AnalysisType,                           #"Deterministic" or "Stochastic" type of simulated returns.
+                     DeSimType = ScenType,                                #Deterministic return scenarios. 
+                     StoSimType = SimType,                                #"Assumed" or "Conservative" (for stochastic analysis)
+                     FundingPolicy = ERPolicy,                            #"Variable Statutory", "Fixed Statutory", or "ADC" funding policy.
+                     CostShare_AmoNew = CostSharingAmo,                   #"No" or "Yes". "No" means no Amo cost sharing between the employer and new hires.
+                     CostShare_NCNew = CostSharingNC,                     #"No" or "Yes". "No" means no Normal cost sharing between the employer and new hires.
+                     CurrentDebt_period = NoYearsADC_CurrentDebt,         #Amortization period (in years) for current unfunded liability. 
+                     NewDebtCurrentHire_period = NoYearsADC_NewDebtCurrentHire,       #Amortization period (in years) for new unfunded liability created under current hire plan
+                     NewDebtNewHire_period = NoYearsADC_NewDebtNewHire,               #Amortization period (in years) for new unfunded liability created under new hire plan  
+                     AmoMethod_current = AmoMethod_CurrentHire,                       #"Level %" or "Level dollar" amortization method for unfunded liability created under current hire plan
+                     AmoMethod_new = AmoMethod_NewHire,                               #"Level %" or "Level dollar" amortization method for unfunded liability created under new hire plan
+                     OneTimeInfusion = CashInfusion,                                  #One time cash infusion in 2022.
+                     NewHireDC_choice = DC_NewHires,                                  #Percentage of new hires electing the DC plan. This should be in % unit. 
+                     DC_ContRate = DC_Contrib,                                        #DC contribution rate for new hires 
+                     BenMult = BenMult_new){  
   
-  if(Lv_DollarorPercent == 'Lv$'){
-    AmoBase_Inc <- 0
-    
-    #Initialize first row of Amortization and Outstanding Base
-    OutstandingBase_CurrentHires[1,1] <- UAL_AVA_CurrentHires[HistoricalIndex]
-    Amortization_CurrentHires[1,1] <- PMT(pv = OutstandingBase_CurrentHires[1,1], 
-                                          r = NewDR[HistoricalIndex], g = AmoBase_Inc, t = 0.5,
-                                          nper = pmax(OffsetYears_CurrentHires[1,1],1))
-    
-    OutstandingBase_NewHires[1,1] <- UAL_AVA_NewHires[HistoricalIndex]
-    Amortization_NewHires[1,1] <- PMT(pv = OutstandingBase_NewHires[1,1], 
-                                      r = NewDR[HistoricalIndex], g = AmoBase_Inc, t = 0.5,
-                                      nper = pmax(OffsetYears_NewHires[1,1],1))
+  
+  ##Amo period tables
+  currentlayer <- seq(CurrentDebt_period, 1)
+  futurelayer_currenthire <- seq(NewDebtCurrentHire_period, 1)
+  futurelayer_futurehire <- seq(NewDebtNewHire_period, 1)
+  n <- max(length(currentlayer), length(futurelayer_currenthire))
+  length(currentlayer) <- n
+  length(futurelayer_currenthire) <- n
+  
+  #Amo period table for current hires plan
+  OffsetYears_CurrentHires <- rbind(currentlayer, matrix(futurelayer_currenthire, 
+                                                         nrow = RowColCount,
+                                                         ncol = length(currentlayer),
+                                                         byrow = T))
+  
+  rownames(OffsetYears_CurrentHires) <- NULL         #Remove row names
+  
+  for (i in 1:ncol(OffsetYears_CurrentHires)) {      #Put the amo periods on diagonal rows
+    OffsetYears_CurrentHires[,i] <- lag(OffsetYears_CurrentHires[,i], n = i - 1)
   }
+  
+  OffsetYears_CurrentHires[is.na(OffsetYears_CurrentHires)] <- 0    #Turn all NAs in the table to 0s
+  
+  #Amo period table for future hires plan
+  OffsetYears_NewHires <- matrix(futurelayer_futurehire, 
+                                 nrow = RowColCount + 1,
+                                 ncol = length(futurelayer_futurehire),
+                                 byrow = T)
+  
+  for (i in 1:ncol(OffsetYears_NewHires)) {      #Put the amo periods on diagonal rows
+    OffsetYears_NewHires[,i] <- lag(OffsetYears_NewHires[,i], n = i - 1)
+  }
+  
+  OffsetYears_NewHires[is.na(OffsetYears_NewHires)] <- 0    #Turn all NAs in the table to 0s
+  
+  ##Amo base and payment tables
+  #Default value is Lv% for Amo Base 
+  #If its Level $, then set to 0
+  if(AmoMethod_current == "Level $"){
+    AmoBaseInc_CurrentHire <- 0
+  }
+  
+  if(AmoMethod_new == "Level $"){
+    AmoBaseInc_NewHire <- 0
+  }
+  
+  #Amo base & payment - current hires initial setup
+  OutstandingBase_CurrentHires <- matrix(0,RowColCount + 1, length(currentlayer) + 1)
+  Amortization_CurrentHires <- matrix(0,RowColCount + 1, length(currentlayer))
+  #Initialize the first UAAL layer and amo payment (current hires)
+  OutstandingBase_CurrentHires[1,1] <- UAL_AVA_CurrentHires[HistoricalIndex]
+  Amortization_CurrentHires[1,1] <- PMT(pv = OutstandingBase_CurrentHires[1,1], 
+                                        r = CurrentHires_DR[HistoricalIndex], 
+                                        g = AmoBaseInc_CurrentHire, 
+                                        t = 0.5,
+                                        nper = OffsetYears_CurrentHires[1,1])
+  
+  #Amo base & payment - future hires initial setup
+  OutstandingBase_NewHires <- matrix(0,RowColCount + 1, length(futurelayer_futurehire) + 1)
+  Amortization_NewHires <- matrix(0,RowColCount + 1, length(futurelayer_futurehire))
+  
   #Scenario Index for referencing later based on investment return data
-  ScenarioIndex <- which(colnames(Scenario_Data) == as.character(Scen_Type))
+  Scenario_Data$Assumption[StartIndex:nrow(Scenario_Data)] <- DR_CurrentHires    #Change return values in "Assumption" scenario to match the discount rate input for current hires
+  ScenarioIndex <- which(colnames(Scenario_Data) == as.character(DeSimType))
   
   #intialize this value at 0 for Total ER Contributions
   Total_ER[StartIndex-1] <- 0
@@ -227,44 +212,45 @@ RunModel <- function(Analysis_Type = AnalysisType,
       PayrollLegacy_Pct[i] <- PayrollLegacy_Pct[i-1]*0.8
       PayrollNewTier[i] <- 1 - PayrollLegacy_Pct[i]
     }
-    NewHirePayrollDB[i] <- PayrollNewTier[i]*TotalPayroll[i]*(1 - DC_NewHires)
-    NewHirePayrollDC[i] <- PayrollNewTier[i]*TotalPayroll[i]*DC_NewHires
+    NewHirePayrollDB[i] <- PayrollNewTier[i]*TotalPayroll[i]*(1 - NewHireDC_choice)
+    NewHirePayrollDC[i] <- PayrollNewTier[i]*TotalPayroll[i]*NewHireDC_choice
     PayrollLegacy[i] <- PayrollLegacy_Pct[i]*TotalPayroll[i]
     #
     #Discount Rate
-    OriginalDR[i] <- dis_r
-    NewDR[i] <- dis_r_proj
+    CurrentHires_DR[i] <- DR_CurrentHires
+    NewHires_DR[i] <- DR_NewHires
     #
     #Benefit Payments, Admin Expenses
-    BenPayments[i] <- BenPayments[i-1]*(1+BenPayment_Growth)
-    BenPayments_NewHires[i] <- -1*BenefitPayments$NewHireBP_Pct[i]*NewHirePayrollDB[i]
-    BenPayments_CurrentHires[i] <- BenPayments[i] - BenPayments_NewHires[i]
+    BenPayments_BaseTotal[i] <- BenPayments_BaseTotal[i-1]*(1+BenPayment_Growth)
+    BenPayments_BaseNew[i] <- -1*BenefitPayments$NewHireBP_Pct[i]*(NewHirePayrollDB[i] + NewHirePayrollDC[i])
+    BenPayments_NewHires[i] <- -1*BenefitPayments$NewHireBP_Pct[i]*NewHirePayrollDB[i]*BenMult/BenMult_current      #Revise this later with NC ratio
+    BenPayments_CurrentHires[i] <- BenPayments_BaseTotal[i] - BenPayments_BaseNew[i]
     
     Refunds[i] <- 0
     AdminExp_CurrentHires[i] <- -1*Admin_Exp_Pct*PayrollLegacy[i]
     AdminExp_NewHires[i] <- -1*Admin_Exp_Pct*NewHirePayrollDB[i]
     #
-    #Accrued Liability, MOY NC - Original DR
-    MOYNCExistOrigDR[i] <- PayrollLegacy[i]*NC_CurrentHires_Pct_1
-    MOYNCNewHiresOrigDR[i] <- NewHirePayrollDB[i]*NC_NewHires_Pct_1
-    AccrLiabOrigDR_CurrentHires[i] <- AccrLiabOrigDR_CurrentHires[i-1]*(1+OriginalDR[i]) + (MOYNCExistOrigDR[i] + BenPayments_CurrentHires[i])*(1+OriginalDR[i])^0.5
-    AccrLiabOrigDR_NewHires[i] <- AccrLiabOrigDR_NewHires[i-1]*(1+OriginalDR[i]) + (MOYNCNewHiresOrigDR[i] + BenPayments_NewHires[i])*(1+OriginalDR[i])^0.5
-    AccrLiabOrigDR_Total[i] <- AccrLiabOrigDR_CurrentHires[i] + AccrLiabOrigDR_NewHires[i]
-    #
-    #Accrued Liability, MOY NC - New DR
-    DRDifference <- 100*(OriginalDR[i] - NewDR[i])
-    MOYNCExistNewDR[i] <- MOYNCExistOrigDR[i]*((1+(NCSensDR/100))^(DRDifference))
-    MOYNCNewHiresNewDR[i] <- MOYNCNewHiresOrigDR[i]*((1+(NCSensDR/100))^(DRDifference))
-    AccrLiabNewDR_CurrentHires[i] <- AccrLiabOrigDR_CurrentHires[i]*((1+(LiabSensDR/100))^(DRDifference))*((1+(Convexity/100))^((DRDifference)^2/2))
-    AccrLiabNewDR_NewHires[i] <- AccrLiabOrigDR_NewHires[i]*((1+(LiabSensDR/100))^(DRDifference))*((1+(Convexity/100))^((DRDifference)^2/2))
-    AccrLiabNewDR_Total[i] <- AccrLiabOrigDR_Total[i]*((1+(LiabSensDR/100))^(DRDifference))*((1+(Convexity/100))^((DRDifference)^2/2))
+    ##Accrued Liability and Normal Cost calculations (projection + DR adjustment combined in one place)
+    #Normal Cost
+    DRDifference_CurrentNC <- 100*(CurrentHires_DR[HistoricalIndex] - CurrentHires_DR[i])
+    DRDifference_NewNC <- 100*(NewHires_DR[HistoricalIndex] - NewHires_DR[i])
+    MOYNCExist[i] <- PayrollLegacy[i]*NC_CurrentHires_Pct_1*(1 + NCSensDR/100)^DRDifference_CurrentNC     #Revise this later with NC model 
+    MOYNCNewHires[i] <- NewHirePayrollDB[i]*NC_NewHires_Pct_1*(1 + NCSensDR/100)^DRDifference_NewNC       #Revise this later with NC model
     
-    #NC, Reduce Rate contribution policy
-    TotalNC_Pct[i-1] <- (MOYNCExistNewDR[i] + MOYNCNewHiresNewDR[i]) / TotalPayroll[i]
-    NC_Legacy_Pct[i-1] <- MOYNCExistNewDR[i] / PayrollLegacy[i]
+    #Accrued Liability
+    DRDifference_CurrentAAL <- 100*(CurrentHires_DR[i-1] - CurrentHires_DR[i])
+    DRDifference_NewAAL <- 100*(NewHires_DR[i-1] - NewHires_DR[i])
+    AccrLiab_CurrentHires[i] <- (AccrLiab_CurrentHires[i-1]*(1 + CurrentHires_DR[i]) + (MOYNCExist[i] + BenPayments_CurrentHires[i])*(1 + CurrentHires_DR[i])^0.5) * ((1+LiabSensDR/100)^DRDifference_CurrentAAL) * ((1+Convexity/100)^(DRDifference_CurrentAAL^2/2))
+    AccrLiab_NewHires[i] <- (AccrLiab_NewHires[i-1]*(1 + NewHires_DR[i]) + (MOYNCNewHires[i] + BenPayments_NewHires[i])*(1 + NewHires_DR[i])^0.5) * ((1+LiabSensDR/100)^DRDifference_NewAAL) * ((1+Convexity/100)^(DRDifference_NewAAL^2/2))
+    AccrLiab_Total[i] <- AccrLiab_CurrentHires[i] + AccrLiab_NewHires[i]
+    #
+    
+    #NC, Reduced Rate contribution policy
+    # TotalNC_Pct[i-1] <- (MOYNCExistNewDR[i] + MOYNCNewHiresNewDR[i]) / TotalPayroll[i]
+    NC_Legacy_Pct[i-1] <- MOYNCExist[i] / PayrollLegacy[i]
     
     if(NewHirePayrollDB[i] > 0){
-      NC_NewHires_Pct[i-1] <- MOYNCNewHiresNewDR[i] / NewHirePayrollDB[i]
+      NC_NewHires_Pct[i-1] <- MOYNCNewHires[i] / NewHirePayrollDB[i]
     } else {
       NC_NewHires_Pct[i-1] <- 0
     }
@@ -274,43 +260,53 @@ RunModel <- function(Analysis_Type = AnalysisType,
     FixedStat_AmoPayment_Red[i] <- EffStat_ER_Red[i]*TotalPayroll[i] - 
       (NC_Legacy_Pct[i-1] + Admin_Exp_Pct - RedRatFundPeriod_EE)*PayrollLegacy[i] -
       (NC_NewHires_Pct[i-1] + Admin_Exp_Pct - RedRatFundPeriod_EE)*NewHirePayrollDB[i] -
-      DC_Contrib*NewHirePayrollDC[i]
-    FundPeriod_Red[i] <- GetNPER(NewDR[i],AmoBase_Inc,UAL_AVA[i-1],0.5,FixedStat_AmoPayment_Red[i])
+      DC_ContRate*NewHirePayrollDC[i]
+    
+    FundPeriod_Red[i] <- GetNPER(CurrentHires_DR[i],
+                                 AmoBaseInc_CurrentHire,
+                                 UAL_AVA[i-1],
+                                 0.5,
+                                 FixedStat_AmoPayment_Red[i])
     #
-    #ER, EE, Amo Rates
+    ##ER, EE, Amo Rates
+    #Employee normal cost (current hires) 
     if(FundPeriod_Red[i] <= RedRatFundPeriod){
       EE_NC_Legacy_Pct[i-1] <- RedRatFundPeriod_EE
     } else {
       EE_NC_Legacy_Pct[i-1] <- EEContrib_CurrentHires
     }
     
-    if(CostSharing_NC == 'Yes'){
+    #Employee normal cost (new hires + cost sharing condition)
+    if(CostShare_NCNew == 'Yes'){
       EE_NC_NewHires_Pct[i-1] <- NC_NewHires_Pct[i-1]/2
+    } else if (FundPeriod_Red[i] <= RedRatFundPeriod){
+      EE_NC_NewHires_Pct[i-1] <- RedRatFundPeriod_EE 
     } else {
-      if(FundPeriod_Red[i] <= RedRatFundPeriod){
-        EE_NC_NewHires_Pct[i-1] <- RedRatFundPeriod_EE 
-      } else {
-        EE_NC_NewHires_Pct[i-1] <- EEContrib_NewHires
-      }
+      EE_NC_NewHires_Pct[i-1] <- EEContrib_NewHires
     }
     
+    #Employer normal cost
     ER_NC_Legacy_Pct[i-1] <- NC_Legacy_Pct[i-1] - EE_NC_Legacy_Pct[i-1]
     ER_NC_NewHires_Pct[i-1] <- NC_NewHires_Pct[i-1] - EE_NC_NewHires_Pct[i-1]
-    #
-    #Regular Funding Period
-    AmoFactor[i] <- as.matrix(PresentValue(((1+NewDR[i])/(1+AmoBase_Inc))-1,AmoYearsInput_CurrentHires[ProjectionCount+1,2],1) / ((1+NewDR[i])^0.5))
+    
+    #Amo factor to calculate the variable statutory contribution
+    AmoFactor[i] <- as.matrix(PresentValue((1+CurrentHires_DR[i])/(1+AmoBaseInc_CurrentHire)-1,CurrentDebt_period,1) / ((1+CurrentHires_DR[i])^0.5))
     if(FYE[i] < 2025){
       Stat_ER[i] <- Stat_ER[i-1] + 0.001
     } else {
       Stat_ER[i] <- Stat_ER[i-1]
     }
+    
+    #Fixed Statutory Employer Contribution
     EffStat_ER[i] <- (Stat_ER[i]*TotalPayroll[i] + Suppl_Contrib[i]) / TotalPayroll[i]
+    
     FixedStat_AmoPayment[i] <- EffStat_ER[i]*TotalPayroll[i] - 
       (ER_NC_Legacy_Pct[i-1] + Admin_Exp_Pct)*PayrollLegacy[i] -
       (ER_NC_NewHires_Pct[i-1] + Admin_Exp_Pct)*NewHirePayrollDB[i] -
-      DC_Contrib*NewHirePayrollDC[i]
+      DC_ContRate*NewHirePayrollDC[i]
     
-    if((round(FundPeriod[i-1],2) > AmoPeriod_CurrentHires) && (UAL_AVA[i-1] > 0) && (FYE[i] > 2022)){
+    #Variable Statutory Employer Contribution
+    if((round(FundPeriod[i-1],2) > CurrentDebt_period) && (UAL_AVA[i-1] > 0) && (FYE[i] > 2022)){
       ADC_Cond[i] <- "Yes"
     } else {
       ADC_Cond[i] <- "No"
@@ -324,26 +320,27 @@ RunModel <- function(Analysis_Type = AnalysisType,
       VarStat_AmoPayment[i] <- FixedStat_AmoPayment_Red[i]
     } else if(ADC_Cond[i] == "Yes"){
       VarStat_AmoPayment[i] <- UAL_AVA[i-1] / AmoFactor[i-1]
-      #This condition is to say if there was any instance of yes for ADC Cond
+      #This condition is to say if there was any instance of yes for ADC Cond before current year
     } else if(!is_empty(which(ADC_Cond[StartIndex:i-1] == "Yes"))){
-      VarStat_AmoPayment[i] <- VarStat_AmoPayment[i-1]*(1 + AmoBase_Inc)
+      VarStat_AmoPayment[i] <- VarStat_AmoPayment[i-1]*(1 + AmoBaseInc_CurrentHire)
     } else {
       VarStat_AmoPayment[i] <- FixedStat_AmoPayment[i]
     }
     
-    FundPeriod[i] <- GetNPER(NewDR[i],AmoBase_Inc,UAL_AVA[i-1],0.5,VarStat_AmoPayment[i])
+    #Funding period for variable statutory contribution
+    FundPeriod[i] <- GetNPER(CurrentHires_DR[i],AmoBaseInc_CurrentHire,UAL_AVA[i-1],0.5,VarStat_AmoPayment[i])
     #
     #Amo Rates
     AmoRate_CurrentHires[i-1] <- sum(Amortization_CurrentHires[ProjectionCount,]) / TotalPayroll[i]
     AmoRate_NewHires[i-1] <- sum(Amortization_NewHires[ProjectionCount,]) / (NewHirePayrollDB[i] + NewHirePayrollDC[i])
     
-    if(CostSharing_Amo == "Yes"){
-      EE_AmoRate_NewHires[i] <- AmoRate_NewHires[i] / 2
+    if(CostShare_AmoNew == "Yes"){
+      EE_AmoRate_NewHires[i-1] <- AmoRate_NewHires[i-1] / 2
     } else {
-      EE_AmoRate_NewHires[i] <- 0
+      EE_AmoRate_NewHires[i-1] <- 0
     }
     
-    if(ER_Policy == "Statutory Rate"){
+    if(FundingPolicy == "Fixed Statutory"){
       StatAmoRate[i-1] <- FixedStat_AmoPayment[i] / TotalPayroll[i]
     } else {
       StatAmoRate[i-1] <- VarStat_AmoPayment[i] / TotalPayroll[i]
@@ -356,43 +353,52 @@ RunModel <- function(Analysis_Type = AnalysisType,
     ER_NC_CurrentHires[i] <- ER_NC_Legacy_Pct[i-1]*PayrollLegacy[i] - AdminExp_CurrentHires[i]
     ER_NC_NewHires[i] <- ER_NC_NewHires_Pct[i-1]*NewHirePayrollDB[i] - AdminExp_NewHires[i]
     
-    if(ER_Policy == "ADC"){
+    if(FundingPolicy == "ADC"){
       ER_Amo_CurrentHires[i] <- max(AmoRate_CurrentHires[i-1]*TotalPayroll[i],-ER_NC_CurrentHires[i])
-      ER_Amo_NewHires[i] <- max(AmoRate_NewHires[i-1]*(NewHirePayrollDB[i] + NewHirePayrollDC[i]),-ER_NC_NewHires[i])
+      ER_Amo_NewHires[i] <- max(AmoRate_NewHires[i-1]*(NewHirePayrollDB[i] + NewHirePayrollDC[i]) - EE_Amo_NewHires[i],-ER_NC_NewHires[i])
     } else {
       ER_Amo_CurrentHires[i] <- max(StatAmoRate[i-1]*PayrollLegacy[i],-ER_NC_CurrentHires[i])
-      ER_Amo_NewHires[i] <- max(StatAmoRate[i-1]*(NewHirePayrollDB[i] + NewHirePayrollDC[i])-EE_Amo_NewHires[i],-ER_NC_NewHires[i])
+      ER_Amo_NewHires[i] <- max(StatAmoRate[i-1]*(NewHirePayrollDB[i] + NewHirePayrollDC[i]),-ER_NC_NewHires[i])
     }
-    #
-    #Solvency Contribution and Return data
-    if((Analysis_Type == 'Stochastic') && (i >= StartIndex)){
-      ROA_MVA[i] <- rnorm(1,Sim_Return,Sim_Volatility)
-    } else if(Analysis_Type == 'Deterministic'){
+    
+    if(FYE[i] == 2022){
+      ERCashInfusion <- OneTimeInfusion
+    } else {
+      ERCashInfusion <- 0
+    }
+    
+    Additional_ER[i] <- ERCashInfusion
+    
+    #R#eturn data
+    #Assign values for simulation
+    if(StoSimType == 'Assumed'){
+      SimReturn <- SimReturnAssumed
+    } else if(StoSimType == 'Conservative'){
+      SimReturn <- SimReturnConservative
+    }
+    
+    #Return data based on deterministic or stochastic
+    if((ReturnType == 'Stochastic') && (i >= StartIndex)){
+      ROA_MVA[i] <- rnorm(1,SimReturn,SimVolatility)
+    } else if(ReturnType == 'Deterministic'){
       ROA_MVA[i] <- as.double(Scenario_Data[i,ScenarioIndex]) 
     }
     
-    Total_Contrib_DC[i] <- DC_Contrib*Ratio_DCVesting*NewHirePayrollDC[i]
-    DC_Forfeit[i] <- DC_Contrib*(1 - Ratio_DCVesting)*NewHirePayrollDC[i]
+    #Solvency Contribution
+    DC_Forfeit[i] <- DC_ContRate*(1 - Ratio_DCVesting)*NewHirePayrollDC[i]
     CashFlows_Total <- BenPayments_CurrentHires[i] + BenPayments_NewHires[i] + Refunds[i] + AdminExp_CurrentHires[i] +
       AdminExp_NewHires[i] + EE_NC_CurrentHires[i] + EE_NC_NewHires[i] + EE_Amo_NewHires[i] +
-      ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i] + DC_Forfeit[i]
+      ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i] + Additional_ER[i] + DC_Forfeit[i]
     
-    if(FYE[i] == 2022){
-      CashFlows_Total <- External_Contrib + CashFlows_Total
-    }
     Solv_Contrib[i] <- as.double(max(-(MVA[i-1]*(1+ROA_MVA[i]) + CashFlows_Total*(1+ROA_MVA[i])^0.5) / (1+ROA_MVA[i])^0.5,0))
-    Solv_Contrib_CurrentHires[i] <- Solv_Contrib[i] * (AccrLiabNewDR_CurrentHires[i] / AccrLiabNewDR_Total[i])
-    Solv_Contrib_NewHires[i] <- Solv_Contrib[i] * (AccrLiabNewDR_NewHires[i] / AccrLiabNewDR_Total[i])
+    Solv_Contrib_CurrentHires[i] <- Solv_Contrib[i] * (AccrLiab_CurrentHires[i] / AccrLiab_Total[i])
+    Solv_Contrib_NewHires[i] <- Solv_Contrib[i] * (AccrLiab_NewHires[i] / AccrLiab_Total[i])
     #
-    #Net CF, Expected MVA, Gain Loss, Defered Losses
+    #Net CF, Expected MVA, Gain Loss, Defered Losses for current hires
     NetCF_CurrentHires[i] <- BenPayments_CurrentHires[i] + AdminExp_CurrentHires[i] + EE_NC_CurrentHires[i] +
-      ER_NC_CurrentHires[i] + ER_Amo_CurrentHires[i] + Solv_Contrib_CurrentHires[i] + DC_Forfeit[i]
+      ER_NC_CurrentHires[i] + ER_Amo_CurrentHires[i] + Additional_ER[i] + Solv_Contrib_CurrentHires[i] + DC_Forfeit[i]
     
-    if(FYE[i] == 2022){
-      NetCF_CurrentHires[i] <- External_Contrib + NetCF_CurrentHires[i]
-    }
-    
-    ExpInvInc_CurrentHires[i] <- (MVA_CurrentHires[i-1]*NewDR[i-1]) + (NetCF_CurrentHires[i]*NewDR[i-1]*0.5)
+    ExpInvInc_CurrentHires[i] <- (MVA_CurrentHires[i-1]*CurrentHires_DR[i]) + (NetCF_CurrentHires[i]*CurrentHires_DR[i]*0.5)
     ExpectedMVA_CurrentHires[i] <- MVA_CurrentHires[i-1] + NetCF_CurrentHires[i] + ExpInvInc_CurrentHires[i]
     MVA_CurrentHires[i] <- MVA_CurrentHires[i-1]*(1+ROA_MVA[i]) + (NetCF_CurrentHires[i])*(1+ROA_MVA[i])^0.5 
     GainLoss_CurrentHires[i] <- MVA_CurrentHires[i] - ExpectedMVA_CurrentHires[i] 
@@ -402,10 +408,11 @@ RunModel <- function(Analysis_Type = AnalysisType,
     Year4GL_CurrentHires[i] <- Year3GL_CurrentHires[i-1]
     TotalDefered_CurrentHires[i] <- Year1GL_CurrentHires[i] + Year2GL_CurrentHires[i] + Year3GL_CurrentHires[i] + Year4GL_CurrentHires[i]
     
+    #Net CF, Expected MVA, Gain Loss, Defered Losses for new hires
     NetCF_NewHires[i] <- BenPayments_NewHires[i] + AdminExp_NewHires[i] + EE_NC_NewHires[i] + EE_Amo_NewHires[i] +
       ER_NC_NewHires[i] + ER_Amo_NewHires[i] + Solv_Contrib_NewHires[i]
     
-    ExpInvInc_NewHires[i] <- (MVA_NewHires[i-1]*NewDR[i-1]) + (NetCF_NewHires[i]*NewDR[i-1]*0.5)
+    ExpInvInc_NewHires[i] <- (MVA_NewHires[i-1]*NewHires_DR[i]) + (NetCF_NewHires[i]*NewHires_DR[i]*0.5)
     ExpectedMVA_NewHires[i] <- MVA_NewHires[i-1] + NetCF_NewHires[i] + ExpInvInc_NewHires[i]
     MVA_NewHires[i] <- MVA_NewHires[i-1]*(1+ROA_MVA[i]) + (NetCF_NewHires[i])*(1+ROA_MVA[i])^0.5 
     GainLoss_NewHires[i] <- MVA_NewHires[i] - ExpectedMVA_NewHires[i] 
@@ -420,63 +427,73 @@ RunModel <- function(Analysis_Type = AnalysisType,
     #AVA_CurrentHires[i] <- MVA_CurrentHires[i] - TotalDefered_CurrentHires[i]
     AVA_CurrentHires[i] <- max(AVA_CurrentHires[i],AVA_lowerbound*MVA_CurrentHires[i])
     AVA_CurrentHires[i] <- min(AVA_CurrentHires[i],AVA_upperbound*MVA_CurrentHires[i])
-    UAL_AVA_CurrentHires[i] <- AccrLiabNewDR_CurrentHires[i] - AVA_CurrentHires[i]
-    UAL_MVA_CurrentHires[i] <- AccrLiabNewDR_CurrentHires[i] - MVA_CurrentHires[i]
+    UAL_AVA_CurrentHires[i] <- AccrLiab_CurrentHires[i] - AVA_CurrentHires[i]
+    UAL_MVA_CurrentHires[i] <- AccrLiab_CurrentHires[i] - MVA_CurrentHires[i]
     
     AVA_NewHires[i] <- AVA_NewHires[i-1] + NetCF_NewHires[i] + ExpInvInc_NewHires[i] + TotalDefered_NewHires[i]
     #AVA_NewHires[i] <- MVA_NewHires[i] - TotalDefered_NewHires[i]
     AVA_NewHires[i] <- max(AVA_NewHires[i],AVA_lowerbound*MVA_NewHires[i])
     AVA_NewHires[i] <- min(AVA_NewHires[i],AVA_upperbound*MVA_NewHires[i])
-    UAL_AVA_NewHires[i] <- AccrLiabNewDR_NewHires[i] - AVA_NewHires[i]
-    UAL_MVA_NewHires[i] <- AccrLiabNewDR_NewHires[i] - MVA_NewHires[i]
+    UAL_AVA_NewHires[i] <- AccrLiab_NewHires[i] - AVA_NewHires[i]
+    UAL_MVA_NewHires[i] <- AccrLiab_NewHires[i] - MVA_NewHires[i]
     
     AVA[i] <- AVA_CurrentHires[i] + AVA_NewHires[i]
     MVA[i] <- MVA_CurrentHires[i] + MVA_NewHires[i]
-    FR_AVA[i] <- AVA[i] / AccrLiabNewDR_Total[i]
-    FR_MVA[i] <- MVA[i] / AccrLiabNewDR_Total[i]
-    UAL_AVA[i] <- AccrLiabNewDR_Total[i] - AVA[i]
-    UAL_MVA[i] <- AccrLiabNewDR_Total[i] - MVA[i]
+    FR_AVA[i] <- AVA[i] / AccrLiab_Total[i]
+    FR_MVA[i] <- MVA[i] / AccrLiab_Total[i]
+    UAL_AVA[i] <- AccrLiab_Total[i] - AVA[i]
+    UAL_MVA[i] <- AccrLiab_Total[i] - MVA[i]
     UAL_AVA_InflAdj[i] <- UAL_AVA[i] / ((1 + asum_infl)^(FYE[i] - NC_StaryYear))
     UAL_MVA_InflAdj[i] <- UAL_MVA[i] / ((1 + asum_infl)^(FYE[i] - NC_StaryYear))
-    #
-    Total_Contrib_DB[i] <- ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + 
-      ER_Amo_NewHires[i] + Solv_Contrib[i]
-    if(FYE[i] == 2022){
-      Total_Contrib_DB[i] <- External_Contrib + Total_Contrib_DB[i]
-    }
-    Total_Contrib[i] <- max(Total_Contrib_DB[i] + Total_Contrib_DC[i],0)
     
-    ER_InflAdj[i] <- Total_Contrib[i] / ((1 + asum_infl)^(FYE[i] - NC_StaryYear))
-    ER_Percentage[i] <- Total_Contrib[i] / TotalPayroll[i]
-    #Total ER starts after first year so set the first year to 0.
-    if(i < StartIndex){
-      Total_ER[i] <- 0
+    
+    #Employer Contribution
+    Total_ERContrib_DB[i] <- ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + 
+      ER_Amo_NewHires[i] + Additional_ER[i] + Solv_Contrib[i]
+    
+    ERContrib_DC[i] <- DC_ContRate * Ratio_DCVesting * NewHirePayrollDC[i]
+    
+    Total_ERContrib[i] <- max(Total_ERContrib_DB[i] + ERContrib_DC[i],0)
+    
+    ER_InflAdj[i] <- Total_ERContrib[i] / ((1 + asum_infl)^(FYE[i] - NC_StaryYear))
+    ER_Percentage[i] <- Total_ERContrib[i] / TotalPayroll[i]
+    
+    #All-in Employer Cost
+    #The total (cumulative) employer contribution in the first year of projection must be set to equal the ER_InflAdj
+    if(i == StartIndex){
+      Total_ER[i] <- ER_InflAdj[i] 
     } else {
       Total_ER[i] <- Total_ER[i-1] + ER_InflAdj[i] 
     }
+    
     AllInCost[i] <- Total_ER[i] + UAL_MVA_InflAdj[i]
-    #
-    #Amortization
+    
+  
+    ##Amortization
     #Current Hires
     if(ProjectionCount < nrow(Amortization_CurrentHires)){
-      OutstandingBase_CurrentHires[ProjectionCount+1,2:(ProjectionCount + 1)] <- OutstandingBase_CurrentHires[ProjectionCount,1:ProjectionCount]*(1 + NewDR[i-1]) - (Amortization_CurrentHires[ProjectionCount,1:ProjectionCount]*(1 + NewDR[i-1])^0.5)
+      OutstandingBase_CurrentHires[ProjectionCount+1,2:ncol(OutstandingBase_CurrentHires)] <- OutstandingBase_CurrentHires[ProjectionCount,1:(ncol(OutstandingBase_CurrentHires)-1)]*(1 + CurrentHires_DR[i]) - (Amortization_CurrentHires[ProjectionCount,1:ncol(Amortization_CurrentHires)]*(1 + CurrentHires_DR[i])^0.5)
       OutstandingBase_CurrentHires[ProjectionCount+1,1] <- UAL_AVA_CurrentHires[i] - sum(OutstandingBase_CurrentHires[ProjectionCount+1,2:ncol(OutstandingBase_CurrentHires)])
       
       #Amo Layers
-      Amortization_CurrentHires[ProjectionCount+1,1:(ProjectionCount + 1)] <- PMT(pv = OutstandingBase_CurrentHires[ProjectionCount+1,1:(ProjectionCount + 1)], 
-                                                                                  r = NewDR[i-1], g = AmoBase_Inc, t = 0.5,
-                                                                                  nper = pmax(OffsetYears_CurrentHires[ProjectionCount+1,1:(ProjectionCount + 1)],1))
+      Amortization_CurrentHires[ProjectionCount+1,1:ncol(Amortization_CurrentHires)] <- PMT(pv = OutstandingBase_CurrentHires[ProjectionCount+1,1:(ncol(OutstandingBase_CurrentHires)-1)], 
+                                                                                            r = CurrentHires_DR[i], 
+                                                                                            g = AmoBaseInc_CurrentHire, 
+                                                                                            t = 0.5,
+                                                                                            nper = pmax(OffsetYears_CurrentHires[ProjectionCount+1,1:ncol(OffsetYears_CurrentHires)],1))
     }
     
     #New Hires
     if(ProjectionCount < nrow(Amortization_NewHires)){
-      OutstandingBase_NewHires[ProjectionCount+1,2:(ProjectionCount + 1)] <- OutstandingBase_NewHires[ProjectionCount,1:ProjectionCount]*(1 + NewDR[i-1]) - (Amortization_NewHires[ProjectionCount,1:ProjectionCount]*(1 + NewDR[i-1])^0.5)
+      OutstandingBase_NewHires[ProjectionCount+1,2:ncol(OutstandingBase_NewHires)] <- OutstandingBase_NewHires[ProjectionCount,1:(ncol(OutstandingBase_NewHires)-1)]*(1 + NewHires_DR[i]) - (Amortization_NewHires[ProjectionCount,1:ncol(Amortization_NewHires)]*(1 + NewHires_DR[i])^0.5)
       OutstandingBase_NewHires[ProjectionCount+1,1] <- UAL_AVA_NewHires[i] - sum(OutstandingBase_NewHires[ProjectionCount+1,2:ncol(OutstandingBase_NewHires)])
       
       #Amo Layers
-      Amortization_NewHires[ProjectionCount+1,1:(ProjectionCount + 1)] <- PMT(pv = OutstandingBase_NewHires[ProjectionCount+1,1:(ProjectionCount + 1)], 
-                                                                              r = NewDR[i-1], g = AmoBase_Inc, t = 0.5,
-                                                                              nper = pmax(OffsetYears_NewHires[ProjectionCount+1,1:(ProjectionCount + 1)],1))
+      Amortization_NewHires[ProjectionCount+1,1:ncol(Amortization_NewHires)] <- PMT(pv = OutstandingBase_NewHires[ProjectionCount+1,1:(ncol(OutstandingBase_NewHires)-1)], 
+                                                                                    r = NewHires_DR[i], 
+                                                                                    g = AmoBaseInc_NewHire, 
+                                                                                    t = 0.5,
+                                                                                    nper = pmax(OffsetYears_NewHires[ProjectionCount+1,1:ncol(OffsetYears_NewHires)],1))
     }
     #
   }  
@@ -491,7 +508,42 @@ RunModel <- function(Analysis_Type = AnalysisType,
 }
 #
 # ##################################################################################################################################################################
-#
+
+#Test
+# a <- as.character(expression(Output, AccrLiab_Total, MVA, AVA, UAL_AVA_InflAdj, FR_AVA, FR_MVA, ER_Percentage, Total_ERContrib, AllInCost))
+# Stat_baseline <- as.data.frame(RunModel()) %>% select(all_of(a))
+# Stat_two_recession <- as.data.frame(RunModel(DeSimType = "Recurring Recession")) %>% select(all_of(a))
+# ADC_baseline <- as.data.frame(RunModel(FundingPolicy = "ADC")) %>% select(all_of(a))
+# ADC_two_recession <- as.data.frame(RunModel(FundingPolicy = "ADC", DeSimType = "Recurring Recession")) %>% select(all_of(a))
+# ADC_two_recession_costshare <- as.data.frame(RunModel(FundingPolicy = "ADC", DeSimType = "Recurring Recession", CostShare_AmoNew = "Yes", CostShare_NCNew = "Yes")) %>% select(all_of(a))
+# ADC_two_recess_costshare_40DC <- as.data.frame(RunModel(FundingPolicy = "ADC", DeSimType = "Recurring Recession", CostShare_AmoNew = "Yes", CostShare_NCNew = "Yes", NewHireDC_choice = 0.4)) %>% select(all_of(a))
+# Stat_cash <- as.data.frame(RunModel(OneTimeInfusion = 300)) %>% select(all_of(a))
+# ADC_cash <- as.data.frame(RunModel(OneTimeInfusion = 300, FundingPolicy = "ADC")) %>% select(all_of(a))
+# ADC_DR_change <- as.data.frame(RunModel(FundingPolicy = "ADC", DR_CurrentHires = 0.06, DR_NewHires = 0.06)) %>% select(all_of(a))
+# ADC_amo_change <- as.data.frame(RunModel(FundingPolicy = "ADC", 
+#                                          CurrentDebt_period = 25, 
+#                                          NewDebtCurrentHire_period = 20, 
+#                                          NewDebtNewHire_period = 10, 
+#                                          DeSimType = "Recurring Recession")) %>% select(all_of(a))
+# 
+# 
+# 
+# result <- list(Stat_baseline = Stat_baseline,
+#                Stat_two_recession = Stat_two_recession,
+#                ADC_baseline = ADC_baseline,
+#                ADC_two_recession = ADC_two_recession,
+#                ADC_two_recession_costshare = ADC_two_recession_costshare,
+#                ADC_two_recess_costshare_40DC = ADC_two_recess_costshare_40DC,
+#                Stat_cash = Stat_cash,
+#                ADC_cash = ADC_cash,
+#                ADC_DR_change = ADC_DR_change,
+#                ADC_amo_change = ADC_amo_change
+#                )
+# 
+# 
+# library(openxlsx)
+# write.xlsx(result, "result.xlsx", overwrite = T)
+
 # #Scenarios
 # Scenario_Returns <- as.data.frame(FYE)
 # Scenario_UAL <- as.data.frame(FYE)

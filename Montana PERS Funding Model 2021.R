@@ -499,12 +499,9 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
   }  
   
   #Join all the outputs together
-  #Initialize Output as the first column FYE
-  Output <- FYE
-  for(i in 2:length(Historical_Data)){
-    Output <- cbind(Output,get(colnames(Historical_Data)[i]))
-  }
-  return(as.data.frame(Output))
+  Output <- data.frame(sapply(colnames(Historical_Data), get, envir = sys.frame(sys.parent(0))))  #Get all the vectors that match the column names in Historical_Data and put them in the output data frame
+  Output <- data.frame(lapply(Output, function(x) ifelse(!is.na(as.numeric(x)), as.numeric(x), x)))  #The code above converted all columns into character due to the ADC_Cond column. This line fixes that by converting all columns (except ADC_Cond) back to numeric.
+  return(Output)
 }
 #
 # ##################################################################################################################################################################

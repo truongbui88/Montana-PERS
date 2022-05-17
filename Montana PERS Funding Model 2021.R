@@ -111,10 +111,14 @@ RowColCount <- (EndProjectionYear - StartProjectionYear + 1)
 #
 ##################################################################################################################################################################
 
-RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate for current hires. Min = 4%. Max = 9%. 0.25% step
-                     DR_NewHires = dis_r_new,                   #Discount rate for new hires. Min = 4%. Max = 9%. 0.25% step
+RunModel <- function(NewHireDC_choice = DC_NewHires,                     #Percentage of new hires electing the DC plan. This should be in % unit.
+                     DC_Policy = DCPolicy,                               #DC contribution policy. Three choices: "Current Policy", "No DC Rollback", "Constant Rate". Default choice: "Current Policy".
+                     DC_ContRate = DC_Contrib,                           #DC contribution rate for the "Constant Rate" option
+                     DR_CurrentHires = dis_r_current,                    #Discount rate for current hires. Min = 4%. Max = 9%. 0.25% step
+                     DR_NewHires = dis_r_new,                            #Discount rate for new hires. Min = 4%. Max = 9%. 0.25% step
                      ReturnType = AnalysisType,                           #"Deterministic" or "Stochastic" type of simulated returns.
                      DeSimType = ScenType,                                #Deterministic return scenarios. 
+                     ModelReturn = model_return,                          #Manually set constant return under the deterministic "Model" scenario
                      StoSimType = SimType,                                #"Assumed" or "Conservative" (for stochastic analysis)
                      FundingPolicy = ERPolicy,                            #"Variable Statutory", "Fixed Statutory", or "ADC" funding policy.
                      CostShare_AmoNew = CostSharingAmo,                   #"No" or "Yes". "No" means no Amo cost sharing between the employer and new hires.
@@ -125,8 +129,7 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
                      AmoMethod_current = AmoMethod_CurrentHire,                       #"Level %" or "Level dollar" amortization method for unfunded liability created under current hire plan
                      AmoMethod_new = AmoMethod_NewHire,                               #"Level %" or "Level dollar" amortization method for unfunded liability created under new hire plan
                      OneTimeInfusion = CashInfusion,                                  #One time cash infusion in 2022.
-                     NewHireDC_choice = DC_NewHires,                                  #Percentage of new hires electing the DC plan. This should be in % unit. 
-                     DC_ContRate = DC_Contrib,                                        #DC contribution rate for new hires 
+                     Max_ERContrib = MaxERContrib,                                    #Maximum ER Contribution Rate (ER Contribution Cap). Default is 100%, meaning effectively no cap.
                      BenMult = BenMult_new){  
   
   
@@ -190,8 +193,11 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
   OutstandingBase_NewHires <- matrix(0,RowColCount + 1, length(futurelayer_futurehire) + 1)
   Amortization_NewHires <- matrix(0,RowColCount + 1, length(futurelayer_futurehire))
   
-  #Scenario Index for referencing later based on investment return data
+  #Set return values for "Model" and "Assumption" deterministic scenarios
+  Scenario_Data$Model[StartIndex:nrow(Scenario_Data)] <- ModelReturn
   Scenario_Data$Assumption[StartIndex:nrow(Scenario_Data)] <- DR_CurrentHires    #Change return values in "Assumption" scenario to match the discount rate input for current hires
+  
+  #Scenario Index for referencing later based on investment return data
   ScenarioIndex <- which(colnames(Scenario_Data) == as.character(DeSimType))
   
   #intialize this value at 0 for Total ER Contributions
@@ -212,9 +218,15 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
       PayrollLegacy_Pct[i] <- PayrollLegacy_Pct[i-1]*0.8
       PayrollNewTier[i] <- 1 - PayrollLegacy_Pct[i]
     }
-    NewHirePayrollDB[i] <- PayrollNewTier[i]*TotalPayroll[i]*(1 - NewHireDC_choice)
-    NewHirePayrollDC[i] <- PayrollNewTier[i]*TotalPayroll[i]*NewHireDC_choice
-    PayrollLegacy[i] <- PayrollLegacy_Pct[i]*TotalPayroll[i]
+    
+    CurrentHirePayroll[i] <- PayrollLegacy_Pct[i] * TotalPayroll[i]
+    CurrentHirePayrollDB[i] <- CurrentHirePayroll[i] * CurrentHirePayrollDB[StartIndex-1] / CurrentHirePayroll[StartIndex-1]   #Assume that the DB current hire payroll / DC current hire payroll ratio remains constant over time
+    CurrentHirePayrollDC[i] <- CurrentHirePayroll[i] * CurrentHirePayrollDC[StartIndex-1] / CurrentHirePayroll[StartIndex-1]
+    
+    NewHirePayroll[i] <- PayrollNewTier[i] * TotalPayroll[i]
+    NewHirePayrollDB[i] <- NewHirePayroll[i] * (1 - NewHireDC_choice)
+    NewHirePayrollDC[i] <- NewHirePayroll[i] * NewHireDC_choice
+    
     #
     #Discount Rate
     CurrentHires_DR[i] <- DR_CurrentHires
@@ -222,19 +234,19 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
     #
     #Benefit Payments, Admin Expenses
     BenPayments_BaseTotal[i] <- BenPayments_BaseTotal[i-1]*(1+BenPayment_Growth)
-    BenPayments_BaseNew[i] <- -1*BenefitPayments$NewHireBP_Pct[i]*(NewHirePayrollDB[i] + NewHirePayrollDC[i])
+    BenPayments_BaseNew[i] <- -1*BenefitPayments$NewHireBP_Pct[i]*NewHirePayroll[i]
     BenPayments_NewHires[i] <- -1*BenefitPayments$NewHireBP_Pct[i]*NewHirePayrollDB[i]*BenMult/BenMult_current      #Revise this later with NC ratio
     BenPayments_CurrentHires[i] <- BenPayments_BaseTotal[i] - BenPayments_BaseNew[i]
     
     Refunds[i] <- 0
-    AdminExp_CurrentHires[i] <- -1*Admin_Exp_Pct*PayrollLegacy[i]
+    AdminExp_CurrentHires[i] <- -1*Admin_Exp_Pct*CurrentHirePayrollDB[i]
     AdminExp_NewHires[i] <- -1*Admin_Exp_Pct*NewHirePayrollDB[i]
     #
     ##Accrued Liability and Normal Cost calculations (projection + DR adjustment combined in one place)
     #Normal Cost
     DRDifference_CurrentNC <- 100*(CurrentHires_DR[HistoricalIndex] - CurrentHires_DR[i])
     DRDifference_NewNC <- 100*(NewHires_DR[HistoricalIndex] - NewHires_DR[i])
-    MOYNCExist[i] <- PayrollLegacy[i]*NC_CurrentHires_Pct_1*(1 + NCSensDR/100)^DRDifference_CurrentNC     #Revise this later with NC model 
+    MOYNCExist[i] <- CurrentHirePayrollDB[i]*NC_CurrentHires_Pct_1*(1 + NCSensDR/100)^DRDifference_CurrentNC     #Revise this later with NC model 
     MOYNCNewHires[i] <- NewHirePayrollDB[i]*NC_NewHires_Pct_1*(1 + NCSensDR/100)^DRDifference_NewNC       #Revise this later with NC model
     
     #Accrued Liability
@@ -247,7 +259,7 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
     
     #NC, Reduced Rate contribution policy
     # TotalNC_Pct[i-1] <- (MOYNCExistNewDR[i] + MOYNCNewHiresNewDR[i]) / TotalPayroll[i]
-    NC_Legacy_Pct[i-1] <- MOYNCExist[i] / PayrollLegacy[i]
+    NC_Legacy_Pct[i-1] <- MOYNCExist[i] / CurrentHirePayrollDB[i]
     
     if(NewHirePayrollDB[i] > 0){
       NC_NewHires_Pct[i-1] <- MOYNCNewHires[i] / NewHirePayrollDB[i]
@@ -256,11 +268,10 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
     }
     
     Suppl_Contrib[i] <- Suppl_Contrib[i-1]*1.01
-    EffStat_ER_Red[i] <- (RedRatFundPeriod_ER*TotalPayroll[i] + Suppl_Contrib[i]) / TotalPayroll[i]
-    FixedStat_AmoPayment_Red[i] <- EffStat_ER_Red[i]*TotalPayroll[i] - 
-      (NC_Legacy_Pct[i-1] + Admin_Exp_Pct - RedRatFundPeriod_EE)*PayrollLegacy[i] -
-      (NC_NewHires_Pct[i-1] + Admin_Exp_Pct - RedRatFundPeriod_EE)*NewHirePayrollDB[i] -
-      DC_ContRate*NewHirePayrollDC[i]
+    EffStat_ER_Red[i] <- (RedRatFundPeriod_ER*(CurrentHirePayrollDB[i] + NewHirePayrollDB[i]) + Suppl_Contrib[i]) / (CurrentHirePayrollDB[i] + NewHirePayrollDB[i])
+    FixedStat_AmoPayment_Red[i] <- EffStat_ER_Red[i]*(CurrentHirePayrollDB[i] + NewHirePayrollDB[i]) - 
+      (NC_Legacy_Pct[i-1] + Admin_Exp_Pct - RedRatFundPeriod_EE)*CurrentHirePayrollDB[i] -
+      (NC_NewHires_Pct[i-1] + Admin_Exp_Pct - RedRatFundPeriod_EE)*NewHirePayrollDB[i]
     
     FundPeriod_Red[i] <- GetNPER(CurrentHires_DR[i],
                                  AmoBaseInc_CurrentHire,
@@ -298,12 +309,11 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
     }
     
     #Fixed Statutory Employer Contribution
-    EffStat_ER[i] <- (Stat_ER[i]*TotalPayroll[i] + Suppl_Contrib[i]) / TotalPayroll[i]
+    EffStat_ER[i] <- (Stat_ER[i]*(CurrentHirePayrollDB[i] + NewHirePayrollDB[i]) + Suppl_Contrib[i]) / (CurrentHirePayrollDB[i] + NewHirePayrollDB[i])
     
-    FixedStat_AmoPayment[i] <- EffStat_ER[i]*TotalPayroll[i] - 
-      (ER_NC_Legacy_Pct[i-1] + Admin_Exp_Pct)*PayrollLegacy[i] -
-      (ER_NC_NewHires_Pct[i-1] + Admin_Exp_Pct)*NewHirePayrollDB[i] -
-      DC_ContRate*NewHirePayrollDC[i]
+    FixedStat_AmoPayment[i] <- EffStat_ER[i]*(CurrentHirePayrollDB[i] + NewHirePayrollDB[i]) - 
+      (ER_NC_Legacy_Pct[i-1] + Admin_Exp_Pct)*CurrentHirePayrollDB[i] -
+      (ER_NC_NewHires_Pct[i-1] + Admin_Exp_Pct)*NewHirePayrollDB[i] 
     
     #Variable Statutory Employer Contribution
     if((round(FundPeriod[i-1],2) > CurrentDebt_period) && (UAL_AVA[i-1] > 0) && (FYE[i] > 2022)){
@@ -332,7 +342,7 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
     #
     #Amo Rates
     AmoRate_CurrentHires[i-1] <- sum(Amortization_CurrentHires[ProjectionCount,]) / TotalPayroll[i]
-    AmoRate_NewHires[i-1] <- sum(Amortization_NewHires[ProjectionCount,]) / (NewHirePayrollDB[i] + NewHirePayrollDC[i])
+    AmoRate_NewHires[i-1] <- sum(Amortization_NewHires[ProjectionCount,]) / NewHirePayroll[i]
     
     if(CostShare_AmoNew == "Yes"){
       EE_AmoRate_NewHires[i-1] <- AmoRate_NewHires[i-1] / 2
@@ -341,25 +351,40 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
     }
     
     if(FundingPolicy == "Fixed Statutory"){
-      StatAmoRate[i-1] <- FixedStat_AmoPayment[i] / TotalPayroll[i]
+      StatAmoRate[i-1] <- FixedStat_AmoPayment[i] / (CurrentHirePayrollDB[i] + NewHirePayrollDB[i])
     } else {
-      StatAmoRate[i-1] <- VarStat_AmoPayment[i] / TotalPayroll[i]
+      StatAmoRate[i-1] <- VarStat_AmoPayment[i] / (CurrentHirePayrollDB[i] + NewHirePayrollDB[i])
     }
     #
+    
+    #DC Contribution
+    if(DC_Policy == "Current Policy"){
+      ER_DC_Pct[i] <- if(FundPeriod_Red[i] <= RedRatFundPeriod) {RedRatFundPeriod_ER} else {Stat_ER[i]}   #If the DB amortization period drops below 25 years and remains below 25 following the rollback of additional ER & EE contributions, then reduce the DC ER contribution rate to 6.9%.
+    } else if(DC_Policy == "No DC Rollback"){
+      ER_DC_Pct[i] <- Stat_ER[i]
+    } else {
+      ER_DC_Pct[i] <- DC_ContRate
+    }
+    
+    ERContrib_DC[i] <- ER_DC_Pct[i] * Ratio_DCVesting * (CurrentHirePayrollDC[i] + NewHirePayrollDC[i])
+    
     #Cashflows, NC, Amo. Solv, etc.
-    EE_NC_CurrentHires[i] <- EE_NC_Legacy_Pct[i-1]*PayrollLegacy[i]
+    EE_NC_CurrentHires[i] <- EE_NC_Legacy_Pct[i-1]*CurrentHirePayrollDB[i]
     EE_NC_NewHires[i] <- EE_NC_NewHires_Pct[i-1]*NewHirePayrollDB[i]
     EE_Amo_NewHires[i] <- EE_AmoRate_NewHires[i-1]*NewHirePayrollDB[i]
-    ER_NC_CurrentHires[i] <- ER_NC_Legacy_Pct[i-1]*PayrollLegacy[i] - AdminExp_CurrentHires[i]
+    ER_NC_CurrentHires[i] <- ER_NC_Legacy_Pct[i-1]*CurrentHirePayrollDB[i] - AdminExp_CurrentHires[i]
     ER_NC_NewHires[i] <- ER_NC_NewHires_Pct[i-1]*NewHirePayrollDB[i] - AdminExp_NewHires[i]
     
     if(FundingPolicy == "ADC"){
       ER_Amo_CurrentHires[i] <- max(AmoRate_CurrentHires[i-1]*TotalPayroll[i],-ER_NC_CurrentHires[i])
-      ER_Amo_NewHires[i] <- max(AmoRate_NewHires[i-1]*(NewHirePayrollDB[i] + NewHirePayrollDC[i]) - EE_Amo_NewHires[i],-ER_NC_NewHires[i])
+      ER_Amo_NewHires[i] <- max(AmoRate_NewHires[i-1]*NewHirePayroll[i] - EE_Amo_NewHires[i],-ER_NC_NewHires[i])
     } else {
-      ER_Amo_CurrentHires[i] <- max(StatAmoRate[i-1]*PayrollLegacy[i],-ER_NC_CurrentHires[i])
-      ER_Amo_NewHires[i] <- max(StatAmoRate[i-1]*(NewHirePayrollDB[i] + NewHirePayrollDC[i]),-ER_NC_NewHires[i])
+      ER_Amo_CurrentHires[i] <- max(StatAmoRate[i-1]*CurrentHirePayrollDB[i],-ER_NC_CurrentHires[i])
+      ER_Amo_NewHires[i] <- max(StatAmoRate[i-1]*NewHirePayrollDB[i],-ER_NC_NewHires[i])
     }
+    
+    ER_Amo_CurrentHires[i] <- min(ER_Amo_CurrentHires[i], Max_ERContrib * TotalPayroll[i] - ER_NC_CurrentHires[i] - ER_NC_NewHires[i] - ER_Amo_NewHires[i] - ERContrib_DC[i]) #Subject the employer contribution to a cap 
+    
     
     if(FYE[i] == 2022){
       ERCashInfusion <- OneTimeInfusion
@@ -385,7 +410,7 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
     }
     
     #Solvency Contribution
-    DC_Forfeit[i] <- DC_ContRate*(1 - Ratio_DCVesting)*NewHirePayrollDC[i]
+    DC_Forfeit[i] <- DC_ContRate * (1 - Ratio_DCVesting) * (CurrentHirePayrollDC[i] + NewHirePayrollDC[i])
     CashFlows_Total <- BenPayments_CurrentHires[i] + BenPayments_NewHires[i] + Refunds[i] + AdminExp_CurrentHires[i] +
       AdminExp_NewHires[i] + EE_NC_CurrentHires[i] + EE_NC_NewHires[i] + EE_Amo_NewHires[i] +
       ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + ER_Amo_NewHires[i] + Additional_ER[i] + DC_Forfeit[i]
@@ -451,8 +476,6 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
     Total_ERContrib_DB[i] <- ER_NC_CurrentHires[i] + ER_NC_NewHires[i] + ER_Amo_CurrentHires[i] + 
       ER_Amo_NewHires[i] + Additional_ER[i] + Solv_Contrib[i]
     
-    ERContrib_DC[i] <- DC_ContRate * Ratio_DCVesting * NewHirePayrollDC[i]
-    
     Total_ERContrib[i] <- max(Total_ERContrib_DB[i] + ERContrib_DC[i],0)
     
     ER_InflAdj[i] <- Total_ERContrib[i] / ((1 + asum_infl)^(FYE[i] - NC_StaryYear))
@@ -505,8 +528,22 @@ RunModel <- function(DR_CurrentHires = dis_r_current,           #Discount rate f
 }
 #
 # ##################################################################################################################################################################
-
 #Test
+
+# library(plotly)
+# 
+# test2 <- RunModel(NewHireDC_choice = 0.75, DC_Policy = "No DC Rollback", FundingPolicy = "ADC")
+# 
+# ggplotly(qplot(data = test2, x = FYE, y = ER_Percentage, geom = "line", ylim = c(0,NA)))
+# ggplotly(qplot(data = test2, x = FYE, y = FR_MVA, geom = "line", ylim = c(0,NA)))
+# ggplotly(qplot(data = test2, x = FYE, y = AllInCost, geom = "line", ylim = c(0,NA)))
+# ggplotly(qplot(data = test2, x = FYE, y = ER_DC_Pct, geom = "line", ylim = c(0,NA)))
+# 
+# 
+# test2$ER_Percentage
+# write.csv(test2, "test2.csv")
+
+
 # a <- as.character(expression(Output, AccrLiab_Total, MVA, AVA, UAL_AVA_InflAdj, FR_AVA, FR_MVA, ER_Percentage, Total_ERContrib, AllInCost))
 # Stat_baseline <- as.data.frame(RunModel()) %>% select(all_of(a))
 # Stat_two_recession <- as.data.frame(RunModel(DeSimType = "Recurring Recession")) %>% select(all_of(a))

@@ -1,0 +1,19 @@
+﻿Input,Baseline,Cash Infusion + Lower ARR,ADC + No DC rollback,DC Default + ADC + No DC rollback
+NewHireDC_choice,0.135,0.135,0.135,0.75
+DC_Policy,Current Policy,Current Policy,No DC Rollback,No DC Rollback
+DC_ContRate,0.079,0.079,0.079,0.079
+DR_CurrentHires,0.0765,0.065,0.0765,0.0765
+DR_NewHires,0.0765,0.065,0.0765,0.0765
+ReturnType,Deterministic,Deterministic,Deterministic,Deterministic
+DeSimType,Assumption,Assumption,Assumption,Assumption
+ModelReturn,0.0765,0.0765,0.0765,0.0765
+StoSimType,Assumed,Assumed,Assumed,Assumed
+FundingPolicy,Variable Statutory,Variable Statutory,ADC,ADC
+CostShare_AmoNew,No,No,No,No
+CostShare_NCNew,No,No,No,No
+CurrentDebt_period,30,30,30,30
+NewDebtCurrentHire_period,30,30,30,30
+NewDebtNewHire_period,30,30,30,30
+AmoMethod_current,Level %,Level %,Level %,Level %
+AmoMethod_new,Level %,Level %,Level %,Level %
+OneTimeInfusion,0,500,0,0

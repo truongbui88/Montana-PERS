@@ -370,13 +370,13 @@ benefit_cal <- function(
              select(Age, RemainingProb))
   } else if (output == "DB") {
     return(SalaryData2 %>% 
-             select(Age, RealPenWealth))
+             select(Age, RealPenWealth, RemainingProb))
   } else if (output == "DC") {
     return(SalaryData2 %>% 
-             select(Age, RealDC_balance))
+             select(Age, RealDC_balance, RemainingProb))
   } else {
     return(SalaryData2 %>% 
-             select(Age, RealHybridWealth))
+             select(Age, RealHybridWealth, RemainingProb))
   }
 }
 
@@ -387,8 +387,9 @@ benefit_cal <- function(
 # NC2 <- benefit_cal(DB_ARR = 0.0665, DB_mult10 = 0.02, DB_mult10_30 = 0.02, DB_mult30 = 0.03)
 # DB_4 <- benefit_cal(output = "DB", DB_ARR = 0.04, ea = 22)
 # DB_7 <- benefit_cal(output = "DB", DB_ARR = 0.07, ea = 22)
-# DB_current <- benefit_cal(output = "DB")
-# DC <- benefit_cal(output = "DC", ea = 22)
+# DB_current <- benefit_cal(output = "DB", ea = 37) %>% select(-RemainingProb)
+# DC <- benefit_cal(output = "DC", ea = 37) %>% select(-RemainingProb)
+
 # attri <- benefit_cal(output = "attrition", ea = 27)  
 #   
 # name_change <- c("DB_4", "DB_7", "DB_current", "DC")

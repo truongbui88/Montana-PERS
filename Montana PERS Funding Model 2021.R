@@ -193,9 +193,9 @@ RunModel <- function(NewHireDC_choice = DC_NewHires,                     #Percen
   OutstandingBase_NewHires <- matrix(0,RowColCount + 1, length(futurelayer_futurehire) + 1)
   Amortization_NewHires <- matrix(0,RowColCount + 1, length(futurelayer_futurehire))
   
-  #Set return values for "Model" and "Assumption" deterministic scenarios
-  Scenario_Data$Model[StartIndex:nrow(Scenario_Data)] <- ModelReturn
-  Scenario_Data$Assumption[StartIndex:nrow(Scenario_Data)] <- DR_CurrentHires    #Change return values in "Assumption" scenario to match the discount rate input for current hires
+  #Set return values for "Model" and "Assumption" deterministic scenarios (revise the index when the new val report is released)
+  Scenario_Data$Model[(StartIndex+1):nrow(Scenario_Data)] <- ModelReturn
+  Scenario_Data$Assumption[(StartIndex+1):nrow(Scenario_Data)] <- DR_CurrentHires    #Change return values in "Assumption" scenario to match the discount rate input for current hires
   
   #Scenario Index for referencing later based on investment return data
   ScenarioIndex <- which(colnames(Scenario_Data) == as.character(DeSimType))
